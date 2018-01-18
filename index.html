@@ -1,0 +1,187 @@
+<html>
+
+<head>
+  <script type="text/javascript">
+    var localVideo;
+    var remoteVideo;
+    var peerConnection;
+    var sendChannel;
+    var peerConnectionConfig = {
+      'iceServers': [
+        { 'urls': ['stun:stun.l.google.com:19302'] }]
+    };
+
+    function handleSendChannelStatusChange(event) {
+      console.log("handle send channel callback", event);
+      if (sendChannel) {
+        var state = sendChannel.readyState;
+        if (state === "open") {
+          console.log("OPen");
+        } else {
+          console.log("Not OPen", state);
+        }
+      }
+    }
+
+    function handleReceiveMessage(msg) {
+      console.log("Holy crp channel got", msg)
+      data = JSON.parse(msg.data);
+      if (data.event == 2) {
+        player.pauseVideo();
+      }
+      if (data.event == 2 || data.event == 3) {
+        player.seekTo(data.currentTime);
+      }
+      if (data.event == 1) {
+        player.playVideo();
+      }
+    }
+
+    function receiveChannelCallback(event) {
+      console.log("REceive chan callbacl", event);
+      sendChannel = event.channel;
+      sendChannel.onmessage = handleReceiveMessage;
+    }
+
+
+    function start(isCaller) {
+      console.log("STart", isCaller)
+      peerConnection = new RTCPeerConnection(peerConnectionConfig);
+      peerConnection.onicecandidate = gotIceCandidate;
+      peerConnection.ondatachannel = receiveChannelCallback;
+      if (isCaller) {
+        sendChannel = peerConnection.createDataChannel("sendChannel");
+        sendChannel.onopen = handleSendChannelStatusChange;
+        sendChannel.onclose = handleSendChannelStatusChange;
+      sendChannel.onmessage = handleReceiveMessage;
+        console.log("Create offer", peerConnectionConfig)
+        peerConnection.createOffer()
+          .then(offer => gotDescription(offer))
+          .catch(e => { console.log("Peer connection offer creat err", e) });
+      }
+    }
+
+    function gotDescription(description) {
+      console.log('got description', description);
+      peerConnection.setLocalDescription(description, function () {
+        console.log("Local description")
+        console.log("gotMessageFromServer(" + JSON.stringify({ sdp: description }) + ")");
+        window.document.getElementById("#share-link").setAttribute("href", "#" + encodeURIComponent(JSON.stringify({ 'sdp': description })));
+      }, function () { console.log('set description error') });
+    }
+
+    function gotIceCandidate(event) {
+      console.log("gotMessageFromServer(" + JSON.stringify({ 'ice': event.candidate }) + ")")
+      if (event.candidate != null) {
+        //serverConnection.send(JSON.stringify({ 'ice': event.candidate }));
+      }
+    }
+
+    function gotRemoteStream(event) {
+      console.log('got remote stream', event);
+      remoteVideo.src = window.URL.createObjectURL(event.stream);
+    }
+
+    function createOfferError(error) {
+      console.log(error);
+    }
+    var iceToAdd = [];
+    function gotMessageFromServer(signal) {
+      if (!peerConnection) start(false);
+      if (signal.sdp) {
+        peerConnection.setRemoteDescription(signal.sdp).then(function () {
+          if (signal.sdp.type == 'offer') {
+            console.log("Create ans")
+            peerConnection.createAnswer().then(gotDescription).catch(e => { console.log("Create ansewr failed ", e) });
+          }
+          console.log("HAve remote desc", peerConnection.remoteDescription.type)
+        });
+      } else if (signal.ice) {
+        console.log("Add ice candiate", signal.ice)
+        if (peerConnection && peerConnection.remoteDescription.type)
+          peerConnection.addIceCandidate(new RTCIceCandidate(signal.ice));
+        else
+          iceToAdd.push(signal.ice)
+      }
+    }
+    function pageReady() {
+      localVideo = document.getElementById('localVideo');
+      remoteVideo = document.getElementById('remoteVideo');
+
+      try {
+        var hash = JSON.parse(window.decodeURIComponent(window.location.hash.substr(1)))
+        if (hash) {
+          console.log("Bootstrap from hash", hash)
+          gotMessageFromServer(hash);
+        }
+      } catch (e) {
+        start(true)
+
+      }
+    }
+
+  </script>
+</head>
+
+<body>
+  <div id="player"></div>
+  
+
+
+  <br />
+
+  <input type="button" id="start" onclick="start(true)" value="Start Video"></input>
+  <a href="#" id="#share-link">Share this room!</a>
+
+  <script type="text/javascript">
+    pageReady();
+      var tag = document.createElement('script');
+
+      tag.src = "https://www.youtube.com/iframe_api";
+      var firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+      // 3. This function creates an <iframe> (and YouTube player)
+      //    after the API code downloads.
+      var player;
+      function onYouTubeIframeAPIReady() {
+        player = new YT.Player('player', {
+          height: '390',
+          width: '640',
+          videoId: 'M7lc1UVf-VE',
+          events: {
+            'onReady': onPlayerReady,
+            'onStateChange': onPlayerStateChange
+          }
+        });
+      }
+
+      // 4. The API will call this function when the video player is ready.
+      function onPlayerReady(event) {
+        event.target.playVideo();
+      }
+
+      // 5. The API calls this function when the player's state changes.
+      //    The function indicates that when playing a video (state=1),
+      //    the player should play for six seconds and then stop.
+      var done = false;
+      function onPlayerStateChange(event) {
+        console.log(event, player.getCurrentTime())
+        if (sendChannel && sendChannel.readyState ==  "open")
+        sendChannel.send(JSON.stringify({
+          event: event.data,
+          currentTime: player.getCurrentTime()
+        }));
+        if (event.data == YT.PlayerState.PLAYING && !done) {
+          setTimeout(stopVideo, 6000);
+          done = true;
+        }
+      }
+      function stopVideo() {
+        player.stopVideo();
+      }
+
+  </script>
+</body>
+
+</html>
