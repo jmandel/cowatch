@@ -14,8 +14,8 @@
       authDomain: "cowatch-fb.firebaseapp.com",
       projectId: "cowatch-fb"
     };
-    var sendChannel;
 
+    var sendChannel;
     function receiveChannelCallback(event) {
       sendChannel = event.channel;
       sendChannel.onmessage = handleReceiveMessage;
@@ -78,9 +78,7 @@
 
         if (answers.length === 1) {
           var answer = { type: 'answer', sdp: answers[0].doc.data().answer }
-          console.log("Got answer to my initial offer!", answer)
           myOfferConnection.setRemoteDescription(answer).then(function () {
-            console.log("Sey my remote since my offer was answered")
             db.collection("iceCandidates").where("sdp", "==", answer.sdp).onSnapshot(iceSnapshot => {
               iceSnapshot.docChanges
                 .filter(c => c.type === 'added')
@@ -99,7 +97,6 @@
 
         if (newOffers.length > 1) return;
         if (newOffers.length == 0) return;
-        console.log("Seeing a new offer initiated by peer!")
         peerConnection = new RTCPeerConnection(peerConnectionConfig);
         peerConnections.push(peerConnection);
         peerConnection.ondatachannel = receiveChannelCallback;
@@ -113,13 +110,10 @@
                 peerConnection.addIceCandidate(new RTCIceCandidate(c.doc.data().ice));
               })
           })
-
-          console.log("Creating a peer to respond to a new offer")
         });
 
         var answerPromise = peerConnection.createAnswer()
         peerConnection.onicecandidate = function (event) {
-          console.log("on peer ice", event.candidate)
           answerPromise.then(offer => {
             event.candidate && db.collection("iceCandidates").add({
               sdp: offer.sdp,
@@ -129,16 +123,12 @@
         };
 
         answerPromise.then(answer => {
-          console.log("Created answer", answer);
-          peerConnection.setLocalDescription(answer).then(() => {
-            console.log("Set peer connection desc", answer);
-          })
+          peerConnection.setLocalDescription(answer).then(() => { })
           newOffers[0].doc.ref.update({ answer: answer.sdp })
         }).catch(e => { console.log("Create ansewr failed ", e) });
 
       })
-    })
-      .catch(e => { console.log("Peer connection offer creat err", e) });
+    }).catch(e => { console.log("Peer connection offer creat err", e) });
 
     var sendChannel;
 
@@ -165,9 +155,14 @@
       }
       checkTime(ping).then(pong => {
         //console.log("Time delay", pong.clock - pong.pingClock, pong.videoTime, ping.videoTime, pong.videoTime - ping.videoTime)
-        if (Math.abs(ping.videoTime - pong.videoTime) > 1 + Math.abs(pong.clock - ping.clock) / 1000) {
+        var pongTime = new Date().getTime()
+        var RTT = Math.abs(pongTime - ping.clock) 
+        if (Math.abs(ping.videoTime - pong.videoTime) > 1 + .5 * RTT / 1000) {
           console.log("Out of sync!");
-          if (lastMessage > ping.clock) return;
+          if (lastMessage > ping.clock - 5000) return;
+          if (pong.videoTime > ping.videoTime) return;
+          if (player.getPlayerState() != YT.PlayerState.PLAYING) return;
+          targetState.videoTime = pong.videoTime + .5 * RTT / 1000
           enforceState(targetState)
         } else {
           targetState.videoTime = Math.min(pong.videoTime, ping.videoTime)
@@ -183,7 +178,7 @@
       videoTime: 0
     }
 
-    function enforceState(state){
+    function enforceState(state) {
       if (!player || !player.seekTo || !player.playVideo) return;
       player.seekTo(state.videoTime)
       if (state.playing) player.playVideo()
@@ -196,12 +191,12 @@
       data = JSON.parse(msg.data);
       //console.log("Parsed", data)
 
-      if (data.state){// && data.state.step > targetState.step){
+      if (data.state) {// && data.state.step > targetState.step){
         targetState = data.state;
         console.log("New state from msg")
         enforceState(targetState)
       }
-      else if (data.state){
+      else if (data.state) {
         console.log("out of order", data.state)
       }
 
@@ -249,18 +244,18 @@
     }
 
     function onPlayerStateChange(event) {
-      //console.log("YT Event", event, player.getCurrentTime())
+      console.log("YT Event", event, player.getCurrentTime())
       if (event.data != YT.PlayerState.PLAYING && event.data != YT.PlayerState.PAUSED) return
-      console.log("Tine diff", player.getCurrentTime(),  targetState.videoTime)
+      console.log("Tine diff", player.getCurrentTime(), targetState.videoTime)
       targetState = {
-          step: targetState.step + 1,
-          playing: event.data == YT.PlayerState.PLAYING,
-          videoTime: player.getCurrentTime()
-        }
+        step: targetState.step + 1,
+        playing: event.data == YT.PlayerState.PLAYING,
+        videoTime: player.getCurrentTime()
+      }
       if (new Date().getTime() - lastMessage < 200) return
-        console.log("UPdate taget", targetState)
+      console.log("UPdate taget", targetState)
       send({
-        state: targetState 
+        state: targetState
       })
     }
 
