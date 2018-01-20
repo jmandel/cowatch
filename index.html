@@ -1,16 +1,154 @@
 <html>
 
 <head>
-  <script type="text/javascript">
-    var localVideo;
-    var remoteVideo;
-    var peerConnection;
+  <script src="https://www.gstatic.com/firebasejs/4.8.2/firebase.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/4.9.0/firebase-firestore.js"></script>
+
+</head>
+
+<body>
+  <div id="player"></div>
+
+
+
+  <br />
+
+  <input type="button" id="start" onclick="start(true)" value="Start Video"></input>
+  <a href="#" id="#share-link">Share this room!</a>
+  <script>
+    // Initialize Firebase
+    // TODO: Replace with your project's customized code snippet
+    var config = {
+      apiKey: "AIzaSyCCguN3p2gYlFbLTEgK7WtlrJlazJ6TgLs",
+      authDomain: "cowatch-fb.firebaseapp.com",
+      projectId: "cowatch-fb"
+    };
     var sendChannel;
+
+    function receiveChannelCallback(event){
+      sendChannel = event.channel;
+      sendChannel.onmessage = handleReceiveMessage;
+    }
+
+
     var peerConnectionConfig = {
       'iceServers': [
         { 'urls': ['stun:stun.l.google.com:19302'] }]
     };
 
+    firebase.initializeApp(config);
+    var db = firebase.firestore();
+    var room = window.location.hash.substring(1);
+    var doc = null;
+    var isCaller;
+    var receivedOffer;
+    var seenIceCandidates = [];
+    peerConnections = [];
+
+
+    var iceCandidates = []
+    myOfferConnection = new RTCPeerConnection(peerConnectionConfig);
+    myOfferConnection.ondatachannel = receiveChannelCallback;
+    receiveChannelCallback({channel: myOfferConnection.createDataChannel("sendChannel")});
+
+    var offerPromise = myOfferConnection.createOffer();
+    myOfferConnection.onicecandidate = function (event) {
+          console.log("on my ice", event.candidate)
+      offerPromise.then(offer => {
+        event.candidate && db.collection("iceCandidates").add({
+          sdp: offer.sdp,
+          ice: JSON.parse(JSON.stringify(event.candidate))
+        })
+      })
+    };
+
+    offerPromise.then(offer => {
+
+      myOfferConnection.setLocalDescription(offer);
+      console.log("Submitting my offer", offer);
+
+      db.collection("offers").add({
+        offer: offer.sdp,
+        room: room,
+      })
+
+      db.collection("offers").where("room", "==", room).onSnapshot(snapshot => {
+        console.log("new snapshopt", snapshot.docChanges.map(c => c.doc.data()));
+
+        var answers = snapshot.docChanges
+          .filter(c => c.type === "modified")
+          .filter(c => c.doc.data().offer === offer.sdp);
+
+        console.log("rows about this offer", offer.sdp, answers.length, answers.map(c => [c.type, c.doc.data()]))
+
+        answers = answers
+          .filter(c => c.doc.data().answer);
+
+        if (answers.length === 1) {
+          var answer = { type: 'answer', sdp: answers[0].doc.data().answer }
+          console.log("Got answer to my initial offer!", answer)
+          myOfferConnection.setRemoteDescription(answer).then(function () {
+            console.log("Sey my remote since my offer was answered")
+            db.collection("iceCandidates").where("sdp", "==", answer.sdp).onSnapshot(iceSnapshot => {
+              iceSnapshot.docChanges
+                .filter(c => c.type === 'added')
+                .forEach(c => {
+                  console.log("Saw ice candidae for remote on myOFfer")
+                  myOfferConnection.addIceCandidate(new RTCIceCandidate(c.doc.data().ice));
+                })
+            })
+          });
+          return;
+        }
+
+        var newOffers = snapshot.docChanges
+          .filter(c => c.type === "added")
+          .filter(c => c.doc.data().offer !== offer.sdp);
+
+        if (newOffers.length > 1) return;
+        if (newOffers.length == 0) return;
+        console.log("Seeing a new offer initiated by peer!")
+        peerConnection = new RTCPeerConnection(peerConnectionConfig);
+        peerConnections.push(peerConnection);
+        peerConnection.ondatachannel = receiveChannelCallback;
+        var answer = { type: 'offer', sdp: newOffers[0].doc.data().offer };
+        peerConnection.setRemoteDescription(answer).then(function () {
+            db.collection("iceCandidates").where("sdp", "==", answer.sdp).onSnapshot(iceSnapshot => {
+              iceSnapshot.docChanges
+                .filter(c => c.type === 'added')
+                .forEach(c => {
+                  console.log("Saw ice candidae for remote peer's offer")
+                  peerConnection.addIceCandidate(new RTCIceCandidate(c.doc.data().ice));
+                })
+            })
+
+          console.log("Creating a peer to respond to a new offer")
+        });
+
+        var answerPromise = peerConnection.createAnswer()
+        peerConnection.onicecandidate = function (event) {
+          console.log("on peer ice", event.candidate)
+          answerPromise.then(offer => {
+            event.candidate && db.collection("iceCandidates").add({
+              sdp: offer.sdp,
+              ice: JSON.parse(JSON.stringify(event.candidate))
+            })
+          })
+        };
+
+        answerPromise.then(answer => {
+          console.log("Created answer", answer);
+          peerConnection.setLocalDescription(answer).then(() => {
+            console.log("Set peer connection desc", answer);
+          })
+          newOffers[0].doc.ref.update({ answer: answer.sdp })
+        }).catch(e => { console.log("Create ansewr failed ", e) });
+
+      })
+    })
+      .catch(e => { console.log("Peer connection offer creat err", e) });
+
+    var sendChannel;
     function handleSendChannelStatusChange(event) {
       console.log("handle send channel callback", event);
       if (sendChannel) {
@@ -37,149 +175,55 @@
       }
     }
 
-    function receiveChannelCallback(event) {
-      console.log("REceive chan callbacl", event);
-      sendChannel = event.channel;
-      sendChannel.onmessage = handleReceiveMessage;
-    }
-
-
-    function start(isCaller) {
-      console.log("STart", isCaller)
-      peerConnection = new RTCPeerConnection(peerConnectionConfig);
-      peerConnection.onicecandidate = gotIceCandidate;
-      peerConnection.ondatachannel = receiveChannelCallback;
-      if (isCaller) {
-        sendChannel = peerConnection.createDataChannel("sendChannel");
-        sendChannel.onopen = handleSendChannelStatusChange;
-        sendChannel.onclose = handleSendChannelStatusChange;
-      sendChannel.onmessage = handleReceiveMessage;
-        console.log("Create offer", peerConnectionConfig)
-        peerConnection.createOffer()
-          .then(offer => gotDescription(offer))
-          .catch(e => { console.log("Peer connection offer creat err", e) });
-      }
-    }
-
-    function gotDescription(description) {
-      console.log('got description', description);
-      peerConnection.setLocalDescription(description, function () {
-        console.log("Local description")
-        console.log("gotMessageFromServer(" + JSON.stringify({ sdp: description }) + ")");
-        window.document.getElementById("#share-link").setAttribute("href", "#" + encodeURIComponent(JSON.stringify({ 'sdp': description })));
-      }, function () { console.log('set description error') });
-    }
-
-    function gotIceCandidate(event) {
-      console.log("gotMessageFromServer(" + JSON.stringify({ 'ice': event.candidate }) + ")")
-      if (event.candidate != null) {
-        //serverConnection.send(JSON.stringify({ 'ice': event.candidate }));
-      }
-    }
-
-    function gotRemoteStream(event) {
-      console.log('got remote stream', event);
-      remoteVideo.src = window.URL.createObjectURL(event.stream);
-    }
-
     function createOfferError(error) {
       console.log(error);
     }
-    var iceToAdd = [];
-    function gotMessageFromServer(signal) {
-      if (!peerConnection) start(false);
-      if (signal.sdp) {
-        peerConnection.setRemoteDescription(signal.sdp).then(function () {
-          if (signal.sdp.type == 'offer') {
-            console.log("Create ans")
-            peerConnection.createAnswer().then(gotDescription).catch(e => { console.log("Create ansewr failed ", e) });
-          }
-          console.log("HAve remote desc", peerConnection.remoteDescription.type)
-        });
-      } else if (signal.ice) {
-        console.log("Add ice candiate", signal.ice)
-        if (peerConnection && peerConnection.remoteDescription.type)
-          peerConnection.addIceCandidate(new RTCIceCandidate(signal.ice));
-        else
-          iceToAdd.push(signal.ice)
-      }
-    }
-    function pageReady() {
-      localVideo = document.getElementById('localVideo');
-      remoteVideo = document.getElementById('remoteVideo');
+    var tag = document.createElement('script');
 
-      try {
-        var hash = JSON.parse(window.decodeURIComponent(window.location.hash.substr(1)))
-        if (hash) {
-          console.log("Bootstrap from hash", hash)
-          gotMessageFromServer(hash);
+    tag.src = "https://www.youtube.com/iframe_api";
+    var firstScriptTag = document.getElementsByTagName('script')[0];
+    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+    // 3. This function creates an <iframe> (and YouTube player)
+    //    after the API code downloads.
+    var player;
+    function onYouTubeIframeAPIReady() {
+      player = new YT.Player('player', {
+        height: '390',
+        width: '640',
+        playerVars: { start: 0 },
+        videoId: room,
+        events: {
+          'onReady': onPlayerReady,
+          'onStateChange': onPlayerStateChange
         }
-      } catch (e) {
-        start(true)
-
-      }
+      });
     }
 
-  </script>
-</head>
+    // 4. The API will call this function when the video player is ready.
+    function onPlayerReady(event) {
+      //event.target.playVideo();
+    }
 
-<body>
-  <div id="player"></div>
-  
-
-
-  <br />
-
-  <input type="button" id="start" onclick="start(true)" value="Start Video"></input>
-  <a href="#" id="#share-link">Share this room!</a>
-
-  <script type="text/javascript">
-    pageReady();
-      var tag = document.createElement('script');
-
-      tag.src = "https://www.youtube.com/iframe_api";
-      var firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-
-      // 3. This function creates an <iframe> (and YouTube player)
-      //    after the API code downloads.
-      var player;
-      function onYouTubeIframeAPIReady() {
-        player = new YT.Player('player', {
-          height: '390',
-          width: '640',
-          videoId: 'M7lc1UVf-VE',
-          events: {
-            'onReady': onPlayerReady,
-            'onStateChange': onPlayerStateChange
-          }
-        });
-      }
-
-      // 4. The API will call this function when the video player is ready.
-      function onPlayerReady(event) {
-        event.target.playVideo();
-      }
-
-      // 5. The API calls this function when the player's state changes.
-      //    The function indicates that when playing a video (state=1),
-      //    the player should play for six seconds and then stop.
-      var done = false;
-      function onPlayerStateChange(event) {
-        console.log(event, player.getCurrentTime())
-        if (sendChannel && sendChannel.readyState ==  "open")
+    // 5. The API calls this function when the player's state changes.
+    //    The function indicates that when playing a video (state=1),
+    //    the player should play for six seconds and then stop.
+    var done = false;
+    function onPlayerStateChange(event) {
+      console.log(event, player.getCurrentTime())
+      if (sendChannel && sendChannel.readyState == "open")
         sendChannel.send(JSON.stringify({
           event: event.data,
           currentTime: player.getCurrentTime()
         }));
-        if (event.data == YT.PlayerState.PLAYING && !done) {
-          setTimeout(stopVideo, 6000);
-          done = true;
-        }
+      if (event.data == YT.PlayerState.PLAYING && !done) {
+        setTimeout(stopVideo, 6000);
+        done = true;
       }
-      function stopVideo() {
-        player.stopVideo();
-      }
+    }
+    function stopVideo() {
+      player.stopVideo();
+    }
 
   </script>
 </body>
