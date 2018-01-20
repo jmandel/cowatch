@@ -3,137 +3,27 @@
 <head>
   <script src="https://www.gstatic.com/firebasejs/4.8.2/firebase.js"></script>
   <script src="https://www.gstatic.com/firebasejs/4.9.0/firebase-firestore.js"></script>
-
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/rxjs/5.5.6/Rx.js"></script>
+  <script src="peers.js"></script>
 </head>
 
 <body>
   <div id="player"></div>
   <script>
-    var config = {
+    var firebaseConfig = {
       apiKey: "AIzaSyCCguN3p2gYlFbLTEgK7WtlrJlazJ6TgLs",
       authDomain: "cowatch-fb.firebaseapp.com",
       projectId: "cowatch-fb"
     };
 
-    var sendChannel;
-    function receiveChannelCallback(event) {
-      sendChannel = event.channel;
-      sendChannel.onmessage = handleReceiveMessage;
-    }
-
-    var peerConnectionConfig = {
-      'iceServers': [
-        { 'urls': ['stun:stun.l.google.com:19302'] }]
-    };
-
-    firebase.initializeApp(config);
-    var db = firebase.firestore();
     var room = window.location.hash.substring(1);
-    var receivedOffer;
     var pongListeners = []
-
-    function send(msg) {
-      if (sendChannel && sendChannel.readyState == 'open') {
-        sendChannel.send(JSON.stringify(msg))
-      }
-    }
-    peerConnections = [];
-
-    myOfferConnection = new RTCPeerConnection(peerConnectionConfig);
-    myOfferConnection.ondatachannel = receiveChannelCallback;
-    receiveChannelCallback({ channel: myOfferConnection.createDataChannel("sendChannel") });
-
-    var offerPromise = myOfferConnection.createOffer();
-    myOfferConnection.onicecandidate = function (event) {
-      console.log("on my ice", event.candidate)
-      offerPromise.then(offer => {
-        event.candidate && db.collection("iceCandidates").add({
-          sdp: offer.sdp,
-          ice: JSON.parse(JSON.stringify(event.candidate))
-        })
-      })
-    };
-
-    offerPromise.then(offer => {
-
-      myOfferConnection.setLocalDescription(offer);
-      console.log("Submitting my offer", offer);
-
-      db.collection("offers").add({
-        offer: offer.sdp,
-        room: room,
-      })
-
-      db.collection("offers").where("room", "==", room).onSnapshot(snapshot => {
-        console.log("new snapshopt", snapshot.docChanges.map(c => c.doc.data()));
-
-        var answers = snapshot.docChanges
-          .filter(c => c.type === "modified")
-          .filter(c => c.doc.data().offer === offer.sdp);
-
-        console.log("rows about this offer", offer.sdp, answers.length, answers.map(c => [c.type, c.doc.data()]))
-
-        answers = answers
-          .filter(c => c.doc.data().answer);
-
-        if (answers.length === 1) {
-          var answer = { type: 'answer', sdp: answers[0].doc.data().answer }
-          myOfferConnection.setRemoteDescription(answer).then(function () {
-            db.collection("iceCandidates").where("sdp", "==", answer.sdp).onSnapshot(iceSnapshot => {
-              iceSnapshot.docChanges
-                .filter(c => c.type === 'added')
-                .forEach(c => {
-                  console.log("Saw ice candidae for remote on myOFfer")
-                  myOfferConnection.addIceCandidate(new RTCIceCandidate(c.doc.data().ice));
-                })
-            })
-          });
-          return;
-        }
-
-        var newOffers = snapshot.docChanges
-          .filter(c => c.type === "added")
-          .filter(c => c.doc.data().offer !== offer.sdp);
-
-        if (newOffers.length > 1) return;
-        if (newOffers.length == 0) return;
-        peerConnection = new RTCPeerConnection(peerConnectionConfig);
-        peerConnections.push(peerConnection);
-        peerConnection.ondatachannel = receiveChannelCallback;
-        var answer = { type: 'offer', sdp: newOffers[0].doc.data().offer };
-        peerConnection.setRemoteDescription(answer).then(function () {
-          db.collection("iceCandidates").where("sdp", "==", answer.sdp).onSnapshot(iceSnapshot => {
-            iceSnapshot.docChanges
-              .filter(c => c.type === 'added')
-              .forEach(c => {
-                console.log("Saw ice candidae for remote peer's offer")
-                peerConnection.addIceCandidate(new RTCIceCandidate(c.doc.data().ice));
-              })
-          })
-        });
-
-        var answerPromise = peerConnection.createAnswer()
-        peerConnection.onicecandidate = function (event) {
-          answerPromise.then(offer => {
-            event.candidate && db.collection("iceCandidates").add({
-              sdp: offer.sdp,
-              ice: JSON.parse(JSON.stringify(event.candidate))
-            })
-          })
-        };
-
-        answerPromise.then(answer => {
-          peerConnection.setLocalDescription(answer).then(() => { })
-          newOffers[0].doc.ref.update({ answer: answer.sdp })
-        }).catch(e => { console.log("Create ansewr failed ", e) });
-
-      })
-    }).catch(e => { console.log("Peer connection offer creat err", e) });
-
-    var sendChannel;
+    var peers = peersObservable(room, firebaseConfig)
+    //peers.subscribe(value => console.log("My peers are", value));
+    peers.subscribe(peerArray => peerArray.filter(p => p.channel).forEach(p => p.channel.onmessage = handleReceiveMessage));
 
     function checkTime(ping) {
-      send(ping)
+      peers.send(ping)
       return new Promise((resolve, reject) => {
         var resolveIfMatch = {
           notify: (pong) => {
@@ -156,7 +46,7 @@
       checkTime(ping).then(pong => {
         //console.log("Time delay", pong.clock - pong.pingClock, pong.videoTime, ping.videoTime, pong.videoTime - ping.videoTime)
         var pongTime = new Date().getTime()
-        var RTT = Math.abs(pongTime - ping.clock) 
+        var RTT = Math.abs(pongTime - ping.clock)
         if (Math.abs(ping.videoTime - pong.videoTime) > 1 + .5 * RTT / 1000) {
           console.log("Out of sync!");
           if (lastMessage > ping.clock - 5000) return;
@@ -187,14 +77,14 @@
       lastMessage = new Date().getTime();
     }
 
-    function handleReceiveMessage(msg) {
+    function handleReceiveMessage(msg, peer) {
       //console.log("Received raw", msg)
       data = JSON.parse(msg.data);
-      //console.log("Parsed", data)
+      // console.log("Parsed", data)
 
       if (data.state) {// && data.state.step > targetState.step){
         targetState = data.state;
-        console.log("New state from msg")
+        //console.log("New state from msg")
         enforceState(targetState)
       }
       else if (data.state) {
@@ -202,7 +92,7 @@
       }
 
       if (data.ping) {
-        return send({
+        return peers.send({
           pong: true,
           pingClock: data.clock,
           clock: new Date().getTime(),
@@ -254,14 +144,14 @@
         videoTime: player.getCurrentTime()
       }
 
-      if (targetState.playing === state.playing && Math.abs(targetState.videoTime - state.videoTime) < 0.1){
+      if (targetState.playing === state.playing && Math.abs(targetState.videoTime - state.videoTime) < 0.5) {
         return
       }
 
       targetState = state;
       if (new Date().getTime() - lastMessage < 1000) return
       console.log("UPdate taget", targetState)
-      send({
+      peers.send({
         state: state
       })
     }
