@@ -164,22 +164,46 @@
         videoTime: player && player.getCurrentTime && player.getCurrentTime()
       }
       checkTime(ping).then(pong => {
-        console.log("Time delay", pong.clock - pong.pingClock, pong.videoTime, ping.videoTime, pong.videoTime - ping.videoTime)
+        //console.log("Time delay", pong.clock - pong.pingClock, pong.videoTime, ping.videoTime, pong.videoTime - ping.videoTime)
         if (Math.abs(ping.videoTime - pong.videoTime) > 1 + Math.abs(pong.clock - ping.clock) / 1000) {
           console.log("Out of sync!");
-          player.pauseVideo();
-          player.seekTo(Math.min(ping.videoTime, pong.videoTime))
-          send({event: 2, currentTime: Math.min(ping.videoTime, pong.videoTime)})
+          if (lastMessage > ping.clock) return;
+          enforceState(targetState)
+        } else {
+          targetState.videoTime = Math.min(pong.videoTime, ping.videoTime)
         }
       });
     }, 1000)
 
     var lastMessage = new Date().getTime();
-    function handleReceiveMessage(msg) {
-      console.log("Received raw", msg)
-      data = JSON.parse(msg.data);
+
+    targetState = {
+      step: 0,
+      playing: false,
+      videoTime: 0
+    }
+
+    function enforceState(state){
+      if (!player || !player.seekTo || !player.playVideo) return;
+      player.seekTo(state.videoTime)
+      if (state.playing) player.playVideo()
+      else player.pauseVideo()
       lastMessage = new Date().getTime();
-      console.log("Parsed", data)
+    }
+
+    function handleReceiveMessage(msg) {
+      //console.log("Received raw", msg)
+      data = JSON.parse(msg.data);
+      //console.log("Parsed", data)
+
+      if (data.state){// && data.state.step > targetState.step){
+        targetState = data.state;
+        console.log("New state from msg")
+        enforceState(targetState)
+      }
+      else if (data.state){
+        console.log("out of order", data.state)
+      }
 
       if (data.ping) {
         return send({
@@ -194,17 +218,6 @@
         return pongListeners.forEach(l => l.notify(data))
       }
 
-      console.log("look events", data, data.ping, data.pong, data.event)
-      if (data.event == 2) {
-        console.log("So pause, they did")
-        player.pauseVideo();
-      }
-      if (data.event == 2 || data.event == 3) {
-        player.seekTo(data.currentTime);
-      }
-      if (data.event == 1) {
-        player.playVideo();
-      }
     }
 
     function createOfferError(error) {
@@ -236,13 +249,19 @@
     }
 
     function onPlayerStateChange(event) {
-      console.log("YT Event", event, player.getCurrentTime())
-      if ((new Date().getTime() - lastMessage) > 200) {
-        send({
-          event: event.data,
-          currentTime: player.getCurrentTime()
-        });
-      }
+      //console.log("YT Event", event, player.getCurrentTime())
+      if (event.data != YT.PlayerState.PLAYING && event.data != YT.PlayerState.PAUSED) return
+      console.log("Tine diff", player.getCurrentTime(),  targetState.videoTime)
+      targetState = {
+          step: targetState.step + 1,
+          playing: event.data == YT.PlayerState.PLAYING,
+          videoTime: player.getCurrentTime()
+        }
+      if (new Date().getTime() - lastMessage < 200) return
+        console.log("UPdate taget", targetState)
+      send({
+        state: targetState 
+      })
     }
 
   </script>
