@@ -16,6 +16,8 @@
       projectId: "cowatch-fb"
     };
 
+    var t0 = new Date().getTime()
+
     var room = window.location.hash.substring(1);
     var pongListeners = []
     var peers = peersObservable(room, firebaseConfig)
@@ -37,14 +39,27 @@
       })
     }
 
+    var connected = false
+
     setInterval(() => {
       var ping = {
         ping: true,
         clock: new Date().getTime(),
-        videoTime: player && player.getCurrentTime && player.getCurrentTime()
+        videoTime: player && player.getCurrentTime && player.getCurrentTime(),
+        playing: player && player.getPlayerState && (player.getPlayerState() == YT.PlayerState.PLAYING)
       }
       checkTime(ping).then(pong => {
         //console.log("Time delay", pong.clock - pong.pingClock, pong.videoTime, ping.videoTime, pong.videoTime - ping.videoTime)
+        if (!connected) {
+          connected = true
+          if (pong.aliveFor > new Date().getTime() - t0) {
+            targetState.playing = pong.playing
+            targetState.videoTime = pong.videoTime
+            enforceState(targetState)
+            console.log("First ping", targetState)
+          }
+          return;
+        }
         var pongTime = new Date().getTime()
         var RTT = Math.abs(pongTime - ping.clock)
         if (Math.abs(ping.videoTime - pong.videoTime) > 1 + .5 * RTT / 1000) {
@@ -70,11 +85,11 @@
     }
 
     function enforceState(state) {
+      lastMessage = new Date().getTime();
       if (!player || !player.seekTo || !player.playVideo) return;
       player.seekTo(state.videoTime)
       if (state.playing) player.playVideo()
       else player.pauseVideo()
-      lastMessage = new Date().getTime();
     }
 
     function handleReceiveMessage(msg, peer) {
@@ -94,9 +109,11 @@
       if (data.ping) {
         return peers.send({
           pong: true,
+          aliveFor: new Date().getTime() - t0,
           pingClock: data.clock,
           clock: new Date().getTime(),
-          videoTime: player && player.getCurrentTime && player.getCurrentTime()
+          videoTime: player && player.getCurrentTime && player.getCurrentTime(),
+          playing: player && player.getPlayerState && (player.getPlayerState() == YT.PlayerState.PLAYING)
         })
       }
 
@@ -151,9 +168,12 @@
       targetState = state;
       if (new Date().getTime() - lastMessage < 1000) return
       console.log("UPdate taget", targetState)
-      peers.send({
-        state: state
-      })
+      if (connected) {
+        console.log("Connected, sending", targetState)
+        peers.send({
+          state: state
+        })
+      }
     }
 
   </script>
