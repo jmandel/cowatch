@@ -252,7 +252,7 @@
         playing: event.data == YT.PlayerState.PLAYING,
         videoTime: player.getCurrentTime()
       }
-      if (new Date().getTime() - lastMessage < 200) return
+      if (new Date().getTime() - lastMessage < 500) return
       console.log("UPdate taget", targetState)
       send({
         state: targetState
