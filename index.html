@@ -162,6 +162,7 @@
           if (lastMessage > ping.clock - 5000) return;
           if (pong.videoTime > ping.videoTime) return;
           if (player.getPlayerState() != YT.PlayerState.PLAYING) return;
+          console.log("And fixing")
           targetState.videoTime = pong.videoTime + .5 * RTT / 1000
           enforceState(targetState)
         } else {
@@ -247,15 +248,21 @@
       console.log("YT Event", event, player.getCurrentTime())
       if (event.data != YT.PlayerState.PLAYING && event.data != YT.PlayerState.PAUSED) return
       console.log("Tine diff", player.getCurrentTime(), targetState.videoTime)
-      targetState = {
+      var state = {
         step: targetState.step + 1,
         playing: event.data == YT.PlayerState.PLAYING,
         videoTime: player.getCurrentTime()
       }
+
+      if (targetState.playing === state.playing && Math.abs(targetState.videoTime - state.videoTime) < 0.1){
+        return
+      }
+
+      targetState = state;
       if (new Date().getTime() - lastMessage < 1000) return
       console.log("UPdate taget", targetState)
       send({
-        state: targetState
+        state: state
       })
     }
 
