@@ -8,12 +8,7 @@
 
 <body>
   <div id="player"></div>
-
-  <br />
-
   <script>
-    // Initialize Firebase
-    // TODO: Replace with your project's customized code snippet
     var config = {
       apiKey: "AIzaSyCCguN3p2gYlFbLTEgK7WtlrJlazJ6TgLs",
       authDomain: "cowatch-fb.firebaseapp.com",
@@ -25,7 +20,6 @@
       sendChannel = event.channel;
       sendChannel.onmessage = handleReceiveMessage;
     }
-
 
     var peerConnectionConfig = {
       'iceServers': [
@@ -45,8 +39,6 @@
     }
     peerConnections = [];
 
-
-    var iceCandidates = []
     myOfferConnection = new RTCPeerConnection(peerConnectionConfig);
     myOfferConnection.ondatachannel = receiveChannelCallback;
     receiveChannelCallback({ channel: myOfferConnection.createDataChannel("sendChannel") });
@@ -177,7 +169,7 @@
           console.log("Out of sync!");
           player.pauseVideo();
           player.seekTo(Math.min(ping.videoTime, pong.videoTime))
-          handleReceiveMessage({data: JSON.stringify({event: 1, currentTime: Math.min(ping.videoTime, pong.videoTime)})})
+          send({event: 2, currentTime: Math.min(ping.videoTime, pong.videoTime)})
         }
       });
     }, 1000)
@@ -224,8 +216,6 @@
     var firstScriptTag = document.getElementsByTagName('script')[0];
     firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-    // 3. This function creates an <iframe> (and YouTube player)
-    //    after the API code downloads.
     var player;
     function onYouTubeIframeAPIReady() {
       player = new YT.Player('player', {
