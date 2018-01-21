@@ -1,7 +1,6 @@
 function peersObservable(room, firebaseConfig) {
 
     var peers = new Rx.Subject();
-    firebase.initializeApp(firebaseConfig);
     var db = firebase.firestore();
 
     //TODO make local
