@@ -40,17 +40,13 @@
       room = window.location.hash.substring(1);
       peers = peersObservable(room, firebaseConfig)
       peers.subscribe(peerArray => peerArray.filter(p => p.channel).forEach(p => p.channel.onmessage = handleReceiveMessage));
-      player.cueVideoById(room)
+      player && player.cueVideoById(room)
     }
-
+    init()
 
     var t0 = new Date().getTime()
 
-    var room = window.location.hash.substring(1);
     var pongListeners = []
-    var peers = peersObservable(room, firebaseConfig)
-    //peers.subscribe(value => console.log("My peers are", value));
-    peers.subscribe(peerArray => peerArray.filter(p => p.channel).forEach(p => p.channel.onmessage = handleReceiveMessage));
 
     function checkTime(ping) {
       peers.send(ping)
