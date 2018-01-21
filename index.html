@@ -35,11 +35,18 @@
 
     window.onhashchange = init
 
-    function init(){
+    function init() {
       console.log("Change hash")
       room = window.location.hash.substring(1);
       peers = peersObservable(room, firebaseConfig)
-      peers.subscribe(peerArray => peerArray.filter(p => p.channel).forEach(p => p.channel.onmessage = handleReceiveMessage));
+      peers.subscribe(peerArray =>
+        peerArray
+          .filter(p => p.channel)
+          .forEach(p => {
+            p.channel.onmessage = handleReceiveMessage
+            p.channel.onopen =  p.channel.onclose = checkConnectionStatus(peerArray)
+            window.onbeforeunload = () => peerArray.forEach(p=>p.channel && p.channel.close())
+          }));
       player && player.cueVideoById(room)
     }
     init()
@@ -48,6 +55,12 @@
 
     var pongListeners = []
 
+    var checkConnectionStatus = (peerArray) => (event) =>
+      setConnected(peerArray
+        .map(p => p.channel && p.channel.readyState)
+        .filter(state => state === 'open')
+        .length > 0)
+
     function checkTime(ping) {
       peers.send(ping)
       return new Promise((resolve, reject) => {
@@ -55,8 +68,15 @@
           notify: (pong) => {
             if (pong.pingClock == ping.clock) {
               resolve(pong)
-              pongListeners = pongListeners.filter(x => x !== resolveIfMatch)
+              resolveIfMatch.cleanup()
             }
+          },
+          timeout: setTimeout(()=>{
+            reject({})
+            resolveIfMatch.cleanup()
+          }, 5000),
+          cleanup: () => {
+              pongListeners = pongListeners.filter(x => x !== resolveIfMatch)
           }
         }
         pongListeners.push(resolveIfMatch)
@@ -64,6 +84,13 @@
     }
 
     var connected = false
+
+    function setConnected(newStatus) {
+      connected = newStatus;
+      console.log("SetConnected", newStatus)
+      document.getElementById('player').setAttribute('class', connected ? 'connected' : 'disconnected')
+    }
+
 
     setInterval(() => {
       var ping = {
@@ -76,7 +103,6 @@
         //console.log("Time delay", pong.clock - pong.pingClock, pong.videoTime, ping.videoTime, pong.videoTime - ping.videoTime)
         if (!connected) {
           connected = true
-          document.getElementById('player').setAttribute('class', 'connected')
 
           if (pong.aliveFor > new Date().getTime() - t0) {
             targetState.playing = pong.playing
@@ -99,7 +125,7 @@
         } else {
           targetState.videoTime = Math.min(pong.videoTime, ping.videoTime)
         }
-      });
+      }).catch(failure => { });
     }, 1000)
 
     var lastMessage = new Date().getTime();
