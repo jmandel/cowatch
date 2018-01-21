@@ -6,6 +6,22 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/rxjs/5.5.6/Rx.js"></script>
   <script src="peers.js"></script>
 </head>
+<style>
+  body {
+    margin: 0px;
+  }
+
+  iframe {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    border: .5em dashed crimson;
+  }
+
+  iframe.connected {
+    border: .5em solid crimson;
+  }
+</style>
 
 <body>
   <div id="player"></div>
@@ -49,9 +65,11 @@
         playing: player && player.getPlayerState && (player.getPlayerState() == YT.PlayerState.PLAYING)
       }
       checkTime(ping).then(pong => {
-        //console.log("Time delay", pong.clock - pong.pingClock, pong.videoTime, ping.videoTime, pong.videoTime - ping.videoTime)
+        console.log("Time delay", pong.clock - pong.pingClock, pong.videoTime, ping.videoTime, pong.videoTime - ping.videoTime)
         if (!connected) {
           connected = true
+          document.getElementById('player').setAttribute('class', 'connected')
+
           if (pong.aliveFor > new Date().getTime() - t0) {
             targetState.playing = pong.playing
             targetState.videoTime = pong.videoTime
@@ -135,8 +153,6 @@
     var player;
     function onYouTubeIframeAPIReady() {
       player = new YT.Player('player', {
-        height: '390',
-        width: '640',
         playerVars: { start: 0 },
         videoId: room,
         events: {
